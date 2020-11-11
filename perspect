@@ -75,6 +75,17 @@ def remove_closest_point(x, y):
 def update_statusline():
 	topleft, bottomleft, topright, bottomright = get_affinity_points()
 	statusline.set_text('%d:%d; %d:%d; %d:%d; %d:%d' % (topleft.x, topleft.y, topright.x, topright.y, bottomright.x, bottomright.y, bottomleft.x, bottomleft.y))
+	
+	real_points = filter(lambda c: c.x >= 0, [topleft, topright, bottomright, bottomleft])
+	drawable = image.window
+	gc = gtk.gdk.GC(drawable)
+	gc.set_foreground(gtk.gdk.color_parse('red'))
+	drawable.draw_lines(gc, [(c.x, c.y) for c in make_polygon(real_points)])
+
+def make_polygon(points):
+	for i in range(len(points)):
+		yield points[i-1]
+		yield points[i]
 
 def get_affinity_points():
 	points_left_to_right = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))
