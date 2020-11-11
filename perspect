@@ -2,16 +2,23 @@
 
 # what does this script do?
 # - display the image file given in cli argument in a window
-# - let you select 4 coordinates
-# F1 - perspective correction (distort) and crop
-# F2 - crop on bounding box
-# then open resulting image in gPicView
+# - let you select 4 coordinates with left mouse button
+# - you can move an already pinned point by clicking again so then the closes point will be moved over
+# - remove a pin point by right-clicking nearby
+# - middle-click redraws the helper quadrangle
+#
+# KEYS
+#
+# F1 - perspective correction (distort) and crop, then open resulting image in gPicView
+# F2 - crop on bounding box, then open with gPicView
+# ESC - close
 
 import sys
 import os
 import gtk
 import subprocess
 import tempfile
+import glib
 
 
 def add_key_binding(widget, keyname, callback):
@@ -46,6 +53,8 @@ class EventImage(gtk.EventBox):
 	@property
 	def height(self):
 		return self.size[1]
+	def redraw(self):
+		self.image.set_from_pixbuf(self.image.get_pixbuf())
 
 class Coordinate(object):
 	def __init__(self, x, y):
@@ -73,13 +82,18 @@ def remove_closest_point(x, y):
 	coordinates.remove(closest)
 
 def update_statusline():
-	topleft, bottomleft, topright, bottomright = get_affinity_points()
+	topleft, bottomleft, topright, bottomright = get_quadrangle_points()
 	statusline.set_text('%d:%d; %d:%d; %d:%d; %d:%d' % (topleft.x, topleft.y, topright.x, topright.y, bottomright.x, bottomright.y, bottomleft.x, bottomleft.y))
 	
+	image.redraw()
+	glib.idle_add(draw_cage, priority=glib.PRIORITY_DEFAULT_IDLE)
+
+def draw_cage():
+	topleft, bottomleft, topright, bottomright = get_quadrangle_points()
 	real_points = filter(lambda c: c.x >= 0, [topleft, topright, bottomright, bottomleft])
 	drawable = image.window
 	gc = gtk.gdk.GC(drawable)
-	gc.set_foreground(gtk.gdk.color_parse('red'))
+	gc.set_rgb_fg_color(gtk.gdk.color_parse('red'))
 	drawable.draw_lines(gc, [(c.x, c.y) for c in make_polygon(real_points)])
 
 def make_polygon(points):
@@ -87,7 +101,7 @@ def make_polygon(points):
 		yield points[i-1]
 		yield points[i]
 
-def get_affinity_points():
+def get_quadrangle_points():
 	points_left_to_right = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))
 	while len(points_left_to_right) < 4: points_left_to_right.append(Coordinate(-1, -1))
 	src_left_points  = points_left_to_right[0:2]
@@ -100,7 +114,7 @@ def get_affinity_points():
 
 def do_magick(distortion=True, crop=True):
 	_fd, outfile = tempfile.mkstemp(suffix='.jpg')
-	src_topleft, src_bottomleft, src_topright, src_bottomright = get_affinity_points()
+	src_topleft, src_bottomleft, src_topright, src_bottomright = get_quadrangle_points()
 	leftmost   = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))[0].x
 	topmost    = sorted(coordinates, cmp=lambda a, b: cmp(a.y, b.y))[0].y
 	rightmost  = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))[-1].x
@@ -149,6 +163,7 @@ def do_crop(*_):
 
 
 window = gtk.Window()
+window.set_title("Perspective correction")
 window.connect('delete-event', lambda *x: gtk.main_quit())
 add_key_binding(window, 'Escape', gtk.main_quit)
 add_key_binding(window, 'F1', do_distortion_and_crop)
@@ -160,6 +175,7 @@ statusline.set_alignment(0, 0)
 
 
 SOURCEFILE = sys.argv[1]
+window.set_title(window.get_title() + ": " + SOURCEFILE)
 image = EventImage()
 image.set_from_file(SOURCEFILE)
 image.connect('button-release-event', on_clicked)
