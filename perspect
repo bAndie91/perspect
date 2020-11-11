@@ -11,7 +11,7 @@
 # KEYS
 #
 # F1 - perspective correction (distort) and crop, then open resulting image in gPicView
-# F2 - crop on bounding box, then open with gPicView
+# F2 - crop around on bounding box, then open with gPicView
 # ESC - close
 
 import sys
@@ -137,14 +137,14 @@ def do_magick(distortion=True, crop=True):
 		src_bottomright, trg_bottomright,
 		src_bottomleft, trg_bottomleft,
 		]))
-	cmd = ["convert", SOURCEFILE]
+	cmd = ["convert", SOURCEFILE, "-auto-orient"]
 	if distortion:
 		cmd.extend(["-matte", "-virtual-pixel", "transparent", "-distort", "Perspective", coordinatepairs])
 	if crop:
 		cmd.extend(["-crop", "%dx%d+%d+%d"%(rightmost-leftmost, bottommost-topmost, leftmost, topmost), "+repage"])
 	cmd.extend([outfile])
 	
-	# start convert and display in detached
+	# start convert and display in detached background process
 	pid1 = os.fork()
 	if pid1 == 0:
 		os.closerange(3, 255)
@@ -167,6 +167,10 @@ def do_distortion_and_crop(*_):
 
 def do_crop(*_):
 	do_magick(distortion=False, crop=True)
+
+def do_rotation(*_):
+	# TODO
+	0/0
 
 def exif_transforms():
 	# transform the image on screen according to the file's EXIF metadata
@@ -205,6 +209,7 @@ window.connect('delete-event', lambda *x: gtk.main_quit())
 add_key_binding(window, 'Escape', gtk.main_quit)
 add_key_binding(window, 'F1', do_distortion_and_crop)
 add_key_binding(window, 'F2', do_crop)
+add_key_binding(window, 'F3', do_rotation)
 
 box1 = gtk.VBox()
 statusline = gtk.Label()
