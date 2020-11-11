@@ -1,0 +1,163 @@
+#!/usr/bin/env python2.7
+
+# what does this script do?
+# - display the image file given in cli argument in a window
+# - let you select 4 coordinates
+# F1 - perspective correction (distort) and crop
+# F2 - crop on bounding box
+# then open resulting image in gPicView
+
+import sys
+import os
+import gtk
+import subprocess
+import tempfile
+
+
+def add_key_binding(widget, keyname, callback):
+	accelgroup = gtk.AccelGroup()
+	key, modifier = gtk.accelerator_parse(keyname)
+	accelgroup.connect_group(key, modifier, gtk.ACCEL_VISIBLE, callback)
+	widget.add_accel_group(accelgroup)
+
+class EventImage(gtk.EventBox):
+	def __init__(self):
+		super(self.__class__, self).__init__()
+		self.image = gtk.Image()
+		self.add(self.image)
+	def clear(self):
+		return self.image.clear()
+	def set_from_pixbuf(self, *args):
+		return self.image.set_from_pixbuf(*args)
+	def set_from_file(self, *args):
+		return self.image.set_from_file(*args)
+	def set_from_file_at_size(self, path, w, h):
+		pixbuf = gtk.gdk.pixbuf_new_from_file_at_size(path, w, h)
+		self.image.set_from_pixbuf(pixbuf)
+	def set_size_request(self, *args):
+		return self.image.set_size_request(*args)
+	@property
+	def size(self):
+		pb = self.image.get_pixbuf()
+		return pb.get_width(), pb.get_height()
+	@property
+	def width(self):
+		return self.size[0]
+	@property
+	def height(self):
+		return self.size[1]
+
+class Coordinate(object):
+	def __init__(self, x, y):
+		self.x = x
+		self.y = y
+	def __str__(self):
+		return '%d,%d' % (self.x, self.y)
+
+def on_clicked(widget, event):
+	x = int(min(max(0, event.x), image.width))
+	y = int(min(max(0, event.y), image.height))
+	
+	if event.button == 1:
+		if all([c.x!=x and c.y!=y for c in coordinates]):
+			if len(coordinates) >= 4:
+				remove_closest_point(x, y)
+			coordinates.append(Coordinate(x, y))
+	elif event.button == 3:
+		remove_closest_point(x, y)
+	update_statusline()
+
+def remove_closest_point(x, y):
+	distances = map(lambda c: {'d': (abs(c.x - x)**2 + abs(c.y - y)**2)**0.5, 'p': c}, coordinates)
+	closest = sorted(distances, key=lambda x: x['d'])[0]['p']
+	coordinates.remove(closest)
+
+def update_statusline():
+	topleft, bottomleft, topright, bottomright = get_affinity_points()
+	statusline.set_text('%d:%d; %d:%d; %d:%d; %d:%d' % (topleft.x, topleft.y, topright.x, topright.y, bottomright.x, bottomright.y, bottomleft.x, bottomleft.y))
+
+def get_affinity_points():
+	points_left_to_right = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))
+	while len(points_left_to_right) < 4: points_left_to_right.append(Coordinate(-1, -1))
+	src_left_points  = points_left_to_right[0:2]
+	src_right_points = points_left_to_right[-2:]
+	src_topleft     = sorted(src_left_points,  cmp=lambda a, b: cmp(a.y, b.y))[0]
+	src_bottomleft  = sorted(src_left_points,  cmp=lambda a, b: cmp(a.y, b.y))[1]
+	src_topright    = sorted(src_right_points, cmp=lambda a, b: cmp(a.y, b.y))[0]
+	src_bottomright = sorted(src_right_points, cmp=lambda a, b: cmp(a.y, b.y))[1]
+	return src_topleft, src_bottomleft, src_topright, src_bottomright
+
+def do_magick(distortion=True, crop=True):
+	_fd, outfile = tempfile.mkstemp(suffix='.jpg')
+	src_topleft, src_bottomleft, src_topright, src_bottomright = get_affinity_points()
+	leftmost   = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))[0].x
+	topmost    = sorted(coordinates, cmp=lambda a, b: cmp(a.y, b.y))[0].y
+	rightmost  = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))[-1].x
+	bottommost = sorted(coordinates, cmp=lambda a, b: cmp(a.y, b.y))[-1].y
+	trg_topleft     = Coordinate(leftmost, topmost)
+	trg_bottomleft  = Coordinate(leftmost, bottommost)
+	trg_topright    = Coordinate(rightmost, topmost)
+	trg_bottomright = Coordinate(rightmost, bottommost)
+	coordinatepairs = ' '.join(map(str, [
+		src_topleft, trg_topleft, 
+		src_topright, trg_topright,
+		src_bottomright, trg_bottomright,
+		src_bottomleft, trg_bottomleft,
+		]))
+	cmd = ["convert", SOURCEFILE]
+	if distortion:
+		cmd.extend(["-matte", "-virtual-pixel", "transparent", "-distort", "Perspective", coordinatepairs])
+	if crop:
+		cmd.extend(["-crop", "%dx%d+%d+%d"%(rightmost-leftmost, bottommost-topmost, leftmost, topmost), "+repage"])
+	cmd.extend([outfile])
+	
+	# start convert and display in detached
+	pid1 = os.fork()
+	if pid1 == 0:
+		os.closerange(3, 255)
+		pid2 = os.fork()
+		if pid2 == 0:
+			print cmd
+			err = subprocess.call(cmd, stdout=sys.stdout, stderr=sys.stderr)
+			if err != 0:
+				sys.stderr.write("imagemagick error: %d\n" % err)
+			if err == 0:
+				subprocess.Popen(["gpicview", outfile], stdout=sys.stdout, stderr=sys.stderr)
+			os._exit(err)
+		else:
+			os._exit(0)
+	else:
+		os.waitpid(pid1, 0)
+
+def do_distortion_and_crop(*_):
+	do_magick(distortion=True, crop=True)
+
+def do_crop(*_):
+	do_magick(distortion=False, crop=True)
+
+
+
+window = gtk.Window()
+window.connect('delete-event', lambda *x: gtk.main_quit())
+add_key_binding(window, 'Escape', gtk.main_quit)
+add_key_binding(window, 'F1', do_distortion_and_crop)
+add_key_binding(window, 'F2', do_crop)
+
+box1 = gtk.VBox()
+statusline = gtk.Label()
+statusline.set_alignment(0, 0)
+
+
+SOURCEFILE = sys.argv[1]
+image = EventImage()
+image.set_from_file(SOURCEFILE)
+image.connect('button-release-event', on_clicked)
+coordinates = []
+
+
+window.add(box1)
+box1.pack_start(image, True, True)
+box1.pack_start(statusline, False, True)
+
+window.show_all()
+gtk.main()
