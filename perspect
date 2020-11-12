@@ -12,7 +12,15 @@
 #
 # F1 - perspective correction (distort) and crop, then open resulting image in gPicView
 # F2 - crop around on bounding box, then open with gPicView
+# F3 - rotate the image so the drawn line segment (pin 2 points down only, not 4) to be horizontal
+# F4 - rotate the image so the drawn line segment (pin 2 points down only, not 4) to be vertical
 # ESC - close
+#
+# HINTS
+#
+# images are not scaled, but displayed at the original size, so
+# a window manager which supports Alt-dragging and window regions being out of the screen
+# is recommended to work on large images.
 
 import sys
 import os
@@ -168,7 +176,11 @@ def do_distortion_and_crop(*_):
 def do_crop(*_):
 	do_magick(distortion=False, crop=True)
 
-def do_rotation(*_):
+def do_rotation_horizontal(*_):
+	# TODO
+	0/0
+
+def do_rotation_vertical(*_):
 	# TODO
 	0/0
 
@@ -209,7 +221,8 @@ window.connect('delete-event', lambda *x: gtk.main_quit())
 add_key_binding(window, 'Escape', gtk.main_quit)
 add_key_binding(window, 'F1', do_distortion_and_crop)
 add_key_binding(window, 'F2', do_crop)
-add_key_binding(window, 'F3', do_rotation)
+add_key_binding(window, 'F3', do_rotation_horizontal)
+add_key_binding(window, 'F4', do_rotation_vertical)
 
 box1 = gtk.VBox()
 statusline = gtk.Label()
@@ -218,10 +231,12 @@ statusline.set_alignment(0, 0)
 
 SOURCEFILE = sys.argv[1]
 window.set_title(window.get_title() + ": " + SOURCEFILE)
+
 image = EventImage()
 image.set_from_file(SOURCEFILE)
 image.connect('button-release-event', on_clicked)
 exif_transforms()
+
 coordinates = []
 
 
@@ -230,4 +245,5 @@ box1.pack_start(image, True, True)
 box1.pack_start(statusline, False, True)
 
 window.show_all()
+window.window.set_cursor(gtk.gdk.Cursor(gtk.gdk.CROSSHAIR))
 gtk.main()
