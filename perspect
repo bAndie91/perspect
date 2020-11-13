@@ -142,7 +142,8 @@ def update_statusline():
 	#text = '%d:%d; %d:%d; %d:%d; %d:%d' % (topleft.x, topleft.y, topright.x, topright.y, bottomright.x, bottomright.y, bottomleft.x, bottomleft.y)
 	text = '; '.join(map(lambda c: "%d:%d"%(c.x, c.y), filter(lambda c: c.x >= 0, [topleft, topright, bottomright, bottomleft])))
 	if len(coordinates) > 1:
-		text += '; %0.2f°' % get_linesegment_angle(coordinates[0], coordinates[1])
+		vangle, hangle = get_linesegment_angle(coordinates[0], coordinates[1])
+		text += '; vert %0.2f°; horiz %0.2f°' % (vangle, hangle)
 	
 	statusline.set_text(text)
 	
@@ -152,10 +153,11 @@ def update_statusline():
 def draw_cage():
 	topleft, bottomleft, topright, bottomright = get_quadrangle_points()
 	real_points = filter(lambda c: c.x >= 0, [topleft, topright, bottomright, bottomleft])
-	drawable = image.window
-	gc = gtk.gdk.GC(drawable)
-	gc.set_rgb_fg_color(gtk.gdk.color_parse('red'))
-	drawable.draw_lines(gc, [(c.x, c.y) for c in make_polygon(real_points)])
+	if len(real_points) > 0:
+		drawable = image.window
+		gc = gtk.gdk.GC(drawable)
+		gc.set_rgb_fg_color(gtk.gdk.color_parse('red'))
+		drawable.draw_lines(gc, [(c.x, c.y) for c in make_polygon(real_points)])
 
 def make_polygon(points):
 	for i in range(len(points)):
@@ -218,7 +220,7 @@ def run_command_background(cmd, callback=None):
 			print cmd
 			err = subprocess.call(cmd, stdout=sys.stdout, stderr=sys.stderr)
 			if callback is not None:
-				callback[0](err, callback[1:])
+				callback[0](err, *callback[1:])
 			os._exit(err)
 		else:
 			os._exit(0)
@@ -232,16 +234,17 @@ def do_crop(*_):
 	do_magick(distortion=False, crop=True)
 
 def get_linesegment_angle(A, B):
-	tan = float(abs(A.x - B.x)) / float(abs(A.y - B.y))
-	return math.degrees(math.atan(tan))
+	tan = float(A.x - B.x) / float(A.y - B.y)
+	ang = math.degrees(math.atan(tan))
+	return ang, ang + 90 if ang <= 0 else ang - 90
 
 def do_rotation_horizontal(*_):
-	angle = get_linesegment_angle(coordinates[0], coordinates[1])
-	do_rotation(angle - 90)
+	vangle, hangle = get_linesegment_angle(coordinates[0], coordinates[1])
+	do_rotation(hangle)
 
 def do_rotation_vertical(*_):
-	angle = get_linesegment_angle(coordinates[0], coordinates[1])
-	do_rotation(angle)
+	vangle, hangle = get_linesegment_angle(coordinates[0], coordinates[1])
+	do_rotation(vangle)
 
 def do_rotation(angle):
 	cmd = ["convert", SOURCEFILE, "-auto-orient", "-rotate", str(angle)]
