@@ -10,8 +10,8 @@
 #
 # KEYS
 #
-# F1 - perspective correction (distort) and crop, then open resulting image in gPicView
-# F2 - crop around on bounding box, then open with gPicView
+# F1 - perspective correction (distort) and crop, then open resulting image
+# F2 - crop around on bounding box, then open
 # F3 - rotate the image so the drawn line segment (pin 2 points down only, not 4) to be horizontal
 # F4 - rotate the image so the drawn line segment (pin 2 points down only, not 4) to be vertical
 # ESC - close
@@ -30,6 +30,7 @@ import tempfile
 import glib
 import pyexiv2
 import math
+from shutil import copyfile
 
 
 def add_key_binding(widget, keyname, callback):
@@ -72,6 +73,43 @@ class EventImage(gtk.EventBox):
 		self.image.set_from_pixbuf(pb)
 	def redraw(self):
 		self.pixbuf = self.pixbuf
+
+class StockButton(gtk.Button):
+	def __init__(self, label=None, stock=None, use_underline=True, icon_size=None):
+		if stock is not None and stock in gtk.stock_list_ids():
+			stock_tmp = stock
+		else:
+			stock_tmp = gtk.STOCK_ABOUT
+		super(self.__class__, self).__init__(stock=stock_tmp, use_underline=use_underline)
+		if label is not None:
+			self.set_markup(label)
+		if stock is None:
+			self.set_icon('')
+		elif stock not in gtk.stock_list_ids():
+			self.set_icon(stock)
+		if icon_size is not None:
+			self.set_icon(stock, icon_size)
+	def __get_children(self):
+		align = self.get_children()[0]
+		hbox = align.get_children()[0]
+		return hbox.get_children()
+	def set_label(self, label):
+		x, lbl = self.__get_children()
+		lbl.set_label(label)
+	def set_markup(self, label):
+		x, lbl = self.__get_children()
+		lbl.set_markup(label)
+	def set_icon(self, icon, size=gtk.ICON_SIZE_BUTTON):
+		img, x = self.__get_children()
+		if type(icon) == str:
+			if icon == '':
+				img.props.visible = False
+			else:
+				img.set_from_icon_name(icon, size)
+				img.props.visible = True
+		else:
+			img.set_from_pixbuf(icon)
+			img.props.visible = True
 
 class Coordinate(object):
 	def __init__(self, x, y):
@@ -156,12 +194,22 @@ def do_magick(distortion=True, crop=True):
 		cmd.extend(["-matte", "-virtual-pixel", "transparent", "-distort", "Perspective", coordinatepairs])
 	if crop:
 		cmd.extend(["-crop", "%dx%d+%d+%d"%(rightmost-leftmost, bottommost-topmost, leftmost, topmost), "+repage"])
-	run_command_background(cmd)
+	run_command_with_tempfile(cmd)
 
-def run_command_background(cmd):
+def run_command_with_tempfile(cmd):
 	_fd, outfile = tempfile.mkstemp(suffix='.jpg')
 	cmd.extend([outfile])
-	# start convert and display in detached background process
+	run_command_background(cmd, callback=(cb_imagemagick, {'outfile': outfile}))
+
+def cb_imagemagick(err, user_params):
+	if err != 0:
+		sys.stderr.write("imagemagick error: %d\n" % err)
+	else:
+		outfile = user_params['outfile']
+		subprocess.Popen([sys.executable, sys.argv[0], outfile], stdout=sys.stdout, stderr=sys.stderr)
+
+def run_command_background(cmd, callback=None):
+	# start convert in detached background process
 	pid1 = os.fork()
 	if pid1 == 0:
 		os.closerange(3, 255)
@@ -169,12 +217,8 @@ def run_command_background(cmd):
 		if pid2 == 0:
 			print cmd
 			err = subprocess.call(cmd, stdout=sys.stdout, stderr=sys.stderr)
-			if err != 0:
-				sys.stderr.write("imagemagick error: %d\n" % err)
-			if err == 0:
-				# TODO: open in perspect
-				# TODO: and add 'Save' and 'open in gPicView' function
-				subprocess.Popen(["gpicview", outfile], stdout=sys.stdout, stderr=sys.stderr)
+			if callback is not None:
+				callback[0](err, callback[1:])
 			os._exit(err)
 		else:
 			os._exit(0)
@@ -201,7 +245,7 @@ def do_rotation_vertical(*_):
 
 def do_rotation(angle):
 	cmd = ["convert", SOURCEFILE, "-auto-orient", "-rotate", str(angle)]
-	run_command_background(cmd)
+	run_command_with_tempfile(cmd)
 
 def exif_transforms():
 	# transform the image on screen according to the file's EXIF metadata
@@ -232,6 +276,98 @@ def exif_transforms():
 		if rotation is not None:
 			image.pixbuf = image.pixbuf.rotate_simple(rotation)
 
+def do_open(*_):
+	run_command_background(["gpicview", SOURCEFILE])
+
+def do_save_as(*_):
+	save_path = file_choose_dialog_save(SOURCEFILE)
+	if save_path is not None:
+		if not os.path.exists(save_path) or question("Overwrite?\n<tt>%s</tt>"%glib.markup_escape_text(save_path), gtk.STOCK_SAVE, gtk.STOCK_CANCEL, window):
+			try:
+				copyfile(SOURCEFILE, save_path)
+			except Exception as e:
+				display_error(e)
+
+def display_error(e):
+	text = None
+	if isinstance(e, OSError) or isinstance(e, IOError):
+		text = '%s (#%d)' % (e.strerror, e.errno)
+		if e.filename is not None:
+			text += '\n%s' % (e.filename)
+	elif isinstance(e, Exception):
+		text = e.message
+	elif type(e) == type([]):
+		text = ''.join(e)
+	if text is None:
+		text = str(e)
+	dlg = gtk.MessageDialog(window, gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT, gtk.MESSAGE_ERROR, gtk.BUTTONS_OK, text)
+	dlg.set_title("Error")
+	dlg.run()
+	dlg.destroy()
+
+def question(msg, stock_yes=None, stock_no=None, parent=None):
+	dlg = gtk.MessageDialog(parent, gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT, gtk.MESSAGE_QUESTION, gtk.BUTTONS_YES_NO)
+	dlg.set_markup(msg)
+	dlg.set_title("Question")
+	if stock_no is not None:
+		dlg.get_widget_for_response(gtk.RESPONSE_NO).hide()
+		if hasattr(stock_no, '__iter__'):
+			btn_no = StockButton(label=stock_no[0], stock=stock_no[1])
+		else:
+			btn_no = StockButton(stock=stock_no)
+		dlg.add_action_widget(btn_no, gtk.RESPONSE_NO)
+		btn_no.show()
+	if stock_yes is not None:
+		dlg.get_widget_for_response(gtk.RESPONSE_YES).hide()
+		if hasattr(stock_yes, '__iter__'):
+			btn_yes = StockButton(label=stock_yes[0], stock=stock_yes[1])
+		else:
+			btn_yes = StockButton(stock=stock_yes)
+		dlg.add_action_widget(btn_yes, gtk.RESPONSE_YES)
+		btn_yes.show()
+	resp = dlg.run()
+	dlg.destroy()
+	return (resp == gtk.RESPONSE_YES)
+
+def file_choose_dialog_save(filepath):
+	global LastFolder
+	try: LastFolder
+	except NameError: LastFolder = None
+	selected = None
+	action = gtk.FILE_CHOOSER_ACTION_SAVE
+	
+	dlg = gtk.FileChooserDialog(parent=window, action=action, buttons=(gtk.STOCK_CANCEL, gtk.RESPONSE_REJECT, gtk.STOCK_SAVE, gtk.RESPONSE_ACCEPT))
+	if LastFolder is not None: dlg.set_current_folder(LastFolder)
+	dlg.set_current_name(os.path.basename(filepath))
+	
+	last_resp_num = max(map(lambda a: int(getattr(gtk, a)), filter(lambda a: a.startswith('RESPONSE_'), dir(gtk))))
+	
+	resp_num_cwd = last_resp_num + 1
+	btn_cwd = StockButton(label="Working Dir", stock=gtk.STOCK_JUMP_TO)
+	dlg.add_action_widget(btn_cwd, resp_num_cwd)
+	btn_cwd.show()
+	
+	resp_num_fdir = last_resp_num + 2
+	btn_fdir = StockButton(label="Jump to File", stock=gtk.STOCK_JUMP_TO)
+	dlg.add_action_widget(btn_fdir, resp_num_fdir)
+	btn_fdir.show()
+	
+	while True:
+		resp = dlg.run()
+		if resp == gtk.RESPONSE_ACCEPT:
+			selected = dlg.get_filename()
+			break
+		elif resp == resp_num_cwd:
+			dlg.set_current_folder(os.getcwd())
+		elif resp == resp_num_fdir:
+			dlg.set_current_folder(os.path.dirname(filepath))
+		else:
+			break
+	LastFolder = dlg.get_current_folder()
+	dlg.destroy()
+	return selected
+
+
 
 
 window = gtk.Window()
@@ -242,6 +378,8 @@ add_key_binding(window, 'F1', do_distortion_and_crop)
 add_key_binding(window, 'F2', do_crop)
 add_key_binding(window, 'F3', do_rotation_horizontal)
 add_key_binding(window, 'F4', do_rotation_vertical)
+add_key_binding(window, '<Control>S', do_save_as)
+add_key_binding(window, '<Control>O', do_open)
 
 box1 = gtk.VBox()
 statusline = gtk.Label()
