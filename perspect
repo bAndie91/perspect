@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 import glib
 import pyexiv2
+import math
 
 
 def add_key_binding(widget, keyname, callback):
@@ -93,13 +94,19 @@ def on_clicked(widget, event):
 	update_statusline()
 
 def remove_closest_point(x, y):
-	distances = map(lambda c: {'d': (abs(c.x - x)**2 + abs(c.y - y)**2)**0.5, 'p': c}, coordinates)
-	closest = sorted(distances, key=lambda x: x['d'])[0]['p']
-	coordinates.remove(closest)
+	if len(coordinates) > 0:
+		distances = map(lambda c: {'d': (abs(c.x - x)**2 + abs(c.y - y)**2)**0.5, 'p': c}, coordinates)
+		closest = sorted(distances, key=lambda x: x['d'])[0]['p']
+		coordinates.remove(closest)
 
 def update_statusline():
 	topleft, bottomleft, topright, bottomright = get_quadrangle_points()
-	statusline.set_text('%d:%d; %d:%d; %d:%d; %d:%d' % (topleft.x, topleft.y, topright.x, topright.y, bottomright.x, bottomright.y, bottomleft.x, bottomleft.y))
+	#text = '%d:%d; %d:%d; %d:%d; %d:%d' % (topleft.x, topleft.y, topright.x, topright.y, bottomright.x, bottomright.y, bottomleft.x, bottomleft.y)
+	text = '; '.join(map(lambda c: "%d:%d"%(c.x, c.y), filter(lambda c: c.x >= 0, [topleft, topright, bottomright, bottomleft])))
+	if len(coordinates) > 1:
+		text += '; %0.2f°' % get_linesegment_angle(coordinates[0], coordinates[1])
+	
+	statusline.set_text(text)
 	
 	image.redraw()
 	glib.idle_add(draw_cage, priority=glib.PRIORITY_DEFAULT_IDLE)
@@ -129,7 +136,6 @@ def get_quadrangle_points():
 	return src_topleft, src_bottomleft, src_topright, src_bottomright
 
 def do_magick(distortion=True, crop=True):
-	_fd, outfile = tempfile.mkstemp(suffix='.jpg')
 	src_topleft, src_bottomleft, src_topright, src_bottomright = get_quadrangle_points()
 	leftmost   = sorted(coordinates, cmp=lambda a, b: cmp(a.x, b.x))[0].x
 	topmost    = sorted(coordinates, cmp=lambda a, b: cmp(a.y, b.y))[0].y
@@ -150,8 +156,11 @@ def do_magick(distortion=True, crop=True):
 		cmd.extend(["-matte", "-virtual-pixel", "transparent", "-distort", "Perspective", coordinatepairs])
 	if crop:
 		cmd.extend(["-crop", "%dx%d+%d+%d"%(rightmost-leftmost, bottommost-topmost, leftmost, topmost), "+repage"])
+	run_command_background(cmd)
+
+def run_command_background(cmd):
+	_fd, outfile = tempfile.mkstemp(suffix='.jpg')
 	cmd.extend([outfile])
-	
 	# start convert and display in detached background process
 	pid1 = os.fork()
 	if pid1 == 0:
@@ -163,6 +172,8 @@ def do_magick(distortion=True, crop=True):
 			if err != 0:
 				sys.stderr.write("imagemagick error: %d\n" % err)
 			if err == 0:
+				# TODO: open in perspect
+				# TODO: and add 'Save' and 'open in gPicView' function
 				subprocess.Popen(["gpicview", outfile], stdout=sys.stdout, stderr=sys.stderr)
 			os._exit(err)
 		else:
@@ -176,13 +187,21 @@ def do_distortion_and_crop(*_):
 def do_crop(*_):
 	do_magick(distortion=False, crop=True)
 
+def get_linesegment_angle(A, B):
+	tan = float(abs(A.x - B.x)) / float(abs(A.y - B.y))
+	return math.degrees(math.atan(tan))
+
 def do_rotation_horizontal(*_):
-	# TODO
-	0/0
+	angle = get_linesegment_angle(coordinates[0], coordinates[1])
+	do_rotation(angle - 90)
 
 def do_rotation_vertical(*_):
-	# TODO
-	0/0
+	angle = get_linesegment_angle(coordinates[0], coordinates[1])
+	do_rotation(angle)
+
+def do_rotation(angle):
+	cmd = ["convert", SOURCEFILE, "-auto-orient", "-rotate", str(angle)]
+	run_command_background(cmd)
 
 def exif_transforms():
 	# transform the image on screen according to the file's EXIF metadata
