@@ -22,3 +22,8 @@ HINTS
 images are not scaled, but displayed at the original size, so
 a window manager which supports Alt-dragging and window regions being out of the screen
 is recommended to work on large images.
+
+REQUIREMENTS
+
+- gtk-2, pygtk
+- imagemagick, convert(1) is called internally
