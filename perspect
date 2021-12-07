@@ -170,7 +170,7 @@ def do_magick(distortion=True, crop=True):
 		src_bottomright, trg_bottomright,
 		src_bottomleft, trg_bottomleft,
 		]))
-	cmd = ["convert", SOURCEFILE, "-auto-orient"]
+	cmd = ["convert", glob.sourcefile, "-auto-orient"]
 	if distortion:
 		cmd.extend(["-matte", "-virtual-pixel", "transparent", "-distort", "Perspective", coordinatepairs])
 	if crop:
@@ -219,19 +219,33 @@ def get_linesegment_angle(A, B):
 
 def do_rotation_horizontal(*_):
 	vangle, hangle = get_linesegment_angle(coordinates[0], coordinates[1])
-	do_rotation(hangle)
+	cmd = get_rotation_params(hangle)
+	run_command_with_tempfile(cmd)
 
 def do_rotation_vertical(*_):
 	vangle, hangle = get_linesegment_angle(coordinates[0], coordinates[1])
-	do_rotation(vangle)
-
-def do_rotation(angle):
-	cmd = ["convert", SOURCEFILE, "-auto-orient", "-rotate", str(angle)]
+	cmd = get_rotation_params(vangle)
 	run_command_with_tempfile(cmd)
+
+def do_rotation_horizontal_and_autocrop(*_):
+	vangle, hangle = get_linesegment_angle(coordinates[0], coordinates[1])
+	cmd = get_rotation_params(hangle)
+	cmd.extend(["-fuzz", "20%", "-trim", "+repage"])
+	run_command_with_tempfile(cmd)
+	
+def do_rotation_vertical_and_autocrop(*_):
+	vangle, hangle = get_linesegment_angle(coordinates[0], coordinates[1])
+	cmd = get_rotation_params(vangle)
+	cmd.extend(["-fuzz", "20%", "-trim", "+repage"])
+	run_command_with_tempfile(cmd)
+
+def get_rotation_params(angle):
+	cmd = ["convert", glob.sourcefile, "-auto-orient", "-rotate", str(angle)]
+	return cmd
 
 def exif_transforms():
 	# transform the image on screen according to the file's EXIF metadata
-	metadata = pyexiv2.ImageMetadata(SOURCEFILE)
+	metadata = pyexiv2.ImageMetadata(glob.sourcefile)
 	metadata.read()
 	if 'Exif.Image.Orientation' in metadata.exif_keys:
 		orientation = metadata['Exif.Image.Orientation'].value
@@ -259,14 +273,14 @@ def exif_transforms():
 			image.pixbuf = image.pixbuf.rotate_simple(rotation)
 
 def do_open(*_):
-	run_command_background(["gpicview", SOURCEFILE])
+	run_command_background(["gpicview", glob.sourcefile])
 
 def do_save_as(*_):
-	save_path = file_choose_dialog_save(SOURCEFILE)
+	save_path = file_choose_dialog_save(glob.sourcefile)
 	if save_path is not None:
 		if not os.path.exists(save_path) or question("Overwrite?\n<tt>%s</tt>"%glib.markup_escape_text(save_path), gtk.STOCK_SAVE, gtk.STOCK_CANCEL, window):
 			try:
-				copyfile(SOURCEFILE, save_path)
+				copyfile(glob.sourcefile, save_path)
 			except Exception as e:
 				display_error(e)
 
@@ -349,6 +363,36 @@ def file_choose_dialog_save(filepath):
 	dlg.destroy()
 	return selected
 
+class SimpleStore(object):
+	pass
+
+def load_file(filepath):
+	image.set_from_file(filepath)
+	glob.sourcefile = filepath
+	exif_transforms()
+	window.set_title(window.get_title() + ": " + glob.sourcefile)
+
+def show_help(*X):
+	text = """Billentyűparancsok
+
+<b>F1</b> : Perspektíva javítás és méretre vágás
+<b>F2</b> : Méretre vágás
+<b>F3</b> : Forgatás úgy hogy a meghúzott vonal vízszintes legyen
+<b>F4</b> : Forgatás úgy hogy a meghúzott vonal függőleges legyen
+<b>Shift + F3/F4</b> : Forgatás és automatikus méretre vágás
+<b>Ctrl + S</b> : Aktuális fájl mentése más néven
+<b>Ctrl + O</b> : Aktuális fájl megnyitása külső programmal
+<b>Escape</b> : Kilépés
+<b>Bal egérgomb</b> : Pontok megjelölése (max 4) egy szakasz vagy négyszög meghúzásához
+<b>Jobb egérgomb</b> : A legközelebbi pont törlése
+<b>Középső egérgomb</b> : Meghúzott szakasz vagy sokszög újrarajzoltatása
+<b>Alt + Bal egérgomb</b> : Ablak mozgatása (ha az ablakkezelő támogatja)
+"""
+	dlg = gtk.MessageDialog(window, gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT, gtk.MESSAGE_INFO, gtk.BUTTONS_OK)
+	dlg.set_markup(text)
+	dlg.set_title("Help")
+	dlg.run()
+	dlg.destroy()
 
 
 
@@ -356,10 +400,13 @@ window = gtk.Window()
 window.set_title("Perspective correction")
 window.connect('delete-event', lambda *x: gtk.main_quit())
 add_key_binding(window, 'Escape', gtk.main_quit)
+add_key_binding(window, 'question', show_help)
 add_key_binding(window, 'F1', do_distortion_and_crop)
 add_key_binding(window, 'F2', do_crop)
 add_key_binding(window, 'F3', do_rotation_horizontal)
 add_key_binding(window, 'F4', do_rotation_vertical)
+add_key_binding(window, '<Shift>F3', do_rotation_horizontal_and_autocrop)
+add_key_binding(window, '<Shift>F4', do_rotation_vertical_and_autocrop)
 add_key_binding(window, '<Control>S', do_save_as)
 add_key_binding(window, '<Control>O', do_open)
 
@@ -368,16 +415,15 @@ statusline = gtk.Label()
 statusline.set_alignment(0, 0)
 
 
-SOURCEFILE = sys.argv[1]
-window.set_title(window.get_title() + ": " + SOURCEFILE)
-
+glob = SimpleStore()
 image = EventImage()
-image.set_from_file(SOURCEFILE)
 image.connect('button-release-event', on_clicked)
-exif_transforms()
+
+load_file(sys.argv[1])
+
+
 
 coordinates = []
-
 
 window.add(box1)
 box1.pack_start(image, True, True)
